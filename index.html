@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Building Navigation</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        #map { height: 500px; width: 100%; }
+        .controls { margin: 10px; text-align: center; }
+        .controls input, .controls button { margin: 5px; padding: 8px; }
+    </style>
+</head>
+<body>
+
+<div class="controls">
+    <input type="text" id="searchBox" placeholder="Search location...">
+    <button onclick="searchLocation()">Find</button>
+</div>
+
+<div class="controls">
+    <select id="startPoint"></select>
+    <select id="endPoint"></select>
+    <button onclick="findPath()">Navigate</button>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    let map = L.map('map', {
+        crs: L.CRS.Simple,
+        minZoom: -2
+    });
+
+    let floors = {
+        1: "floor_plans/floor1.png",
+        2: "floor_plans/floor2.png",
+        3: "floor_plans/floor3.png"
+    };
+
+    let currentLayer;
+    function changeFloor(floor) {
+        if (currentLayer) {
+            map.removeLayer(currentLayer);
+        }
+        let bounds = [[0, 0], [1000, 1000]];
+        currentLayer = L.imageOverlay(floors[floor], bounds).addTo(map);
+        map.fitBounds(bounds);
+    }
+
+    changeFloor(1);
+
+    let locations = {};
+    let pathLayer;
+
+    async function loadNavigationData() {
+        let response = await fetch("navigationData.json");
+        let data = await response.json();
+        locations = data.nodes;
+
+        Object.keys(locations).forEach(key => {
+            let marker = L.marker(locations[key]).addTo(map).bindPopup(key);
+            document.getElementById("startPoint").innerHTML += `<option value="${key}">${key}</option>`;
+            document.getElementById("endPoint").innerHTML += `<option value="${key}">${key}</option>`;
+        });
+    }
+
+    function searchLocation() {
+        let query = document.getElementById("searchBox").value.toLowerCase();
+        if (locations[query]) {
+            map.setView(locations[query], 1);
+            L.popup().setLatLng(locations[query]).setContent(query).openOn(map);
+        } else {
+            alert("Location not found!");
+        }
+    }
+
+    function findPath() {
+        if (pathLayer) map.removeLayer(pathLayer);
+
+        let start = document.getElementById("startPoint").value;
+        let end = document.getElementById("endPoint").value;
+        let path = aStar(start, end);
+
+        if (path.length > 0) {
+            let latlngs = path.map(node => locations[node]);
+            pathLayer = L.polyline(latlngs, { color: 'blue', weight: 5 }).addTo(map);
+        } else {
+            alert("No path found!");
+        }
+    }
+
+    function aStar(start, end) {
+        let openSet = [start];
+        let cameFrom = {};
+        let gScore = { [start]: 0 };
+        let fScore = { [start]: heuristic(start, end) };
+
+        while (openSet.length > 0) {
+            let current = openSet.reduce((a, b) => fScore[a] < fScore[b] ? a : b);
+            if (current === end) return reconstructPath(cameFrom, current);
+
+            openSet = openSet.filter(n => n !== current);
+
+            let neighbors = locations[current] ? Object.keys(locations).filter(n => locations[n]) : [];
+            for (let neighbor of neighbors) {
+                let tentativeGScore = gScore[current] + heuristic(current, neighbor);
+                if (tentativeGScore < (gScore[neighbor] || Infinity)) {
+                    cameFrom[neighbor] = current;
+                    gScore[neighbor] = tentativeGScore;
+                    fScore[neighbor] = tentativeGScore + heuristic(neighbor, end);
+                    if (!openSet.includes(neighbor)) openSet.push(neighbor);
+                }
+            }
+        }
+        return [];
+    }
+
+    function heuristic(a, b) {
+        return Math.hypot(locations[a][0] - locations[b][0], locations[a][1] - locations[b][1]);
+    }
+
+    function reconstructPath(cameFrom, current) {
+        let totalPath = [current];
+        while (cameFrom[current]) {
+            current = cameFrom[current];
+            totalPath.unshift(current);
+        }
+        return totalPath;
+    }
+
+    loadNavigationData();
+</script>
+
+</body>
+</html>
