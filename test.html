@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensor Coverage AR</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+    <script src="https://ar.js.org/aframe/build/aframe-ar.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <style>
+        body { margin: 0; overflow: hidden; text-align: center; }
+        video { position: fixed; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        .controls { position: fixed; top: 10px; left: 10px; background: rgba(255,255,255,0.8); padding: 10px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <video id="cameraFeed" autoplay playsinline></video>
+
+    <div class="controls">
+        <button onclick="startDetection()">Detect Sensor</button>
+        <p id="status">Status: Waiting...</p>
+        <p id="heightDisplay">Ceiling Height: -- ft</p>
+    </div>
+
+    <a-scene embedded arjs>
+        <a-box position="0 0 0" color="blue" id="fovBox"></a-box>
+        <a-marker-camera preset='hiro'></a-marker-camera>
+    </a-scene>
+
+    <script>
+        let video = document.getElementById("cameraFeed");
+        let statusText = document.getElementById("status");
+        let heightDisplay = document.getElementById("heightDisplay");
+        let model;
+
+        // Access Camera
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+        .then(stream => { video.srcObject = stream; })
+        .catch(err => console.error("Camera Access Error:", err));
+
+        // Load TensorFlow model
+        async function loadModel() {
+            model = await cocoSsd.load();
+            console.log("Model Loaded!");
+        }
+        loadModel();
+
+        // Start Object Detection
+        async function startDetection() {
+            if (!model) {
+                statusText.innerText = "Status: Loading Model...";
+                return;
+            }
+
+            statusText.innerText = "Status: Detecting...";
+            detectSensor();
+        }
+
+        // Detect Ceiling-Mounted Sensor
+        async function detectSensor() {
+            const img = tf.browser.fromPixels(video);
+            const predictions = await model.detect(img);
+            tf.dispose(img);
+
+            let sensorDetected = false;
+            for (let prediction of predictions) {
+                if (prediction.class === "cell phone" || prediction.class === "remote") { // Modify as needed
+                    let sensorHeight = estimateHeight(prediction);
+                    heightDisplay.innerText = `Ceiling Height: ${sensorHeight.toFixed(1)} ft`;
+                    updateFoV(sensorHeight);
+                    sensorDetected = true;
+                    break;
+                }
+            }
+
+            statusText.innerText = sensorDetected ? "Status: Sensor Detected!" : "Status: No Sensor Found";
+        }
+
+        // Estimate Ceiling Height
+        function estimateHeight(prediction) {
+            let sensorPosition = prediction.bbox[1];  // Y-axis position
+            let screenHeight = video.videoHeight;
+            let heightRatio = sensorPosition / screenHeight;
+            return 8 + (4 * (1 - heightRatio)); // Approximation from 8ft-12ft
+        }
+
+        // Update FoV
+        function updateFoV(height) {
+            let width = height * 1.15;
+            let length = height * 1.43;
+            document.getElementById("fovBox").setAttribute("scale", `${width} 0.1 ${length}`);
+        }
+    </script>
+</body>
+</html>
