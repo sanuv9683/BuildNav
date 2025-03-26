@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>3D Sensor Coverage AR Demo with Sensor Placement</title>
+  <title>3D Sensor Coverage AR Demo with Sensor Placement (Tapping)</title>
   <!-- A-Frame Library -->
   <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
   <!-- AR.js for A-Frame -->
@@ -48,14 +48,14 @@
         const indices = [];
         const segments = data.segments;
         const height = data.height;
-        // Create two circles: one at the top (sensor location) and one at the bottom (floor)
+        // Create two circles: top (sensor level) and bottom (floor, y=0)
         for (let i = 0; i < segments; i++) {
           const theta = (i / segments) * Math.PI * 2;
-          // Top circle vertex (sensor level)
+          // Top circle vertex at sensor level
           const xTop = data.topRadiusX * Math.cos(theta);
           const zTop = data.topRadiusZ * Math.sin(theta);
           vertices.push(xTop, height, zTop);
-          // Bottom circle vertex (floor level, y=0)
+          // Bottom circle vertex at floor level (y=0)
           const xBottom = data.bottomRadiusX * Math.cos(theta);
           const zBottom = data.bottomRadiusZ * Math.sin(theta);
           vertices.push(xBottom, 0, zBottom);
@@ -99,7 +99,7 @@
     <input type="number" step="0.1" id="heightInput" placeholder="e.g. 9.0" style="width:80px;" />
   </div>
   <button onclick="updateCoverage()">Update Coverage</button>
-  <br>
+  <br />
   <button onclick="enableSensorPlacement()">Place Sensor</button>
   <span id="placementStatus"></span>
 </div>
@@ -108,9 +108,9 @@
 <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;" vr-mode-ui="enabled: false">
   <!-- Using the "hiro" marker as an anchor -->
   <a-marker preset="hiro" type="pattern">
-    <!-- An invisible ground plane for sensor placement (click/tap detection) -->
+    <!-- An invisible ground plane for sensor placement (covers a large area) -->
     <a-plane id="groundPlane" position="0 0 0" rotation="-90 0 0" width="10" height="10"
-             material="opacity:0; transparent:true"></a-plane>
+             material="opacity: 0.01; transparent:true"></a-plane>
 
     <!-- 3D Coverage Volume drawn as an elliptical frustum -->
     <a-entity id="coverageVolume"></a-entity>
@@ -120,18 +120,21 @@
       <a-text value="Sensor" align="center" color="#ff0000" position="0 0.2 0"></a-text>
     </a-box>
   </a-marker>
-  <!-- The AR Camera -->
-  <a-entity camera></a-entity>
+
+  <!-- Camera with a cursor for touch/mouse events -->
+  <a-entity id="camera" camera look-controls position="0 0 0">
+    <!-- The cursor uses rayOrigin 'mouse' so that clicks/taps register -->
+    <a-cursor rayOrigin="mouse" fuse="false"></a-cursor>
+  </a-entity>
 </a-scene>
 
 <script>
-  // Global variable to store sensor's horizontal (x,z) position.
+  // Global variable to store sensor's horizontal (x, z) position.
   let sensorPos = { x: 0, z: 0 };
   // Flag to control sensor placement mode.
   let sensorPlacementMode = false;
 
-  // Example coverage data (in feet). These values represent sensor coverage (width and length)
-  // at a given mounting height.
+  // Sample coverage data (in feet)
   const coverageDataFeet = [
     { height: 7.5, width: 7.7, length: 9.5 },
     { height: 8.2, width: 9.2, length: 11.4 },
@@ -151,7 +154,7 @@
   const heightSelect = document.getElementById("heightSelect");
   const heightInput = document.getElementById("heightInput");
 
-  // Populate the dropdown based on the chosen unit system.
+  // Populate the height dropdown based on the chosen unit.
   function populateHeightDropdown() {
     heightSelect.innerHTML = "";
     const data = unitSelect.value === "feet" ? coverageDataFeet : coverageDataMeters;
@@ -164,8 +167,7 @@
   }
   populateHeightDropdown();
 
-  // Finds the coverage dimensions (width and length) for the given height.
-  // Uses an exact match if possible; otherwise, picks the closest entry.
+  // Lookup coverage dimensions (width and length) for a given height.
   function findCoverageDimensions(inputHeight, isFeet) {
     const data = isFeet ? coverageDataFeet : coverageDataMeters;
     let exact = data.find(d => d.height === inputHeight);
@@ -176,7 +178,7 @@
     return { width: closest.width, length: closest.length };
   }
 
-  // Update the sensor and its coverage volume.
+  // Update the sensor's position and its coverage volume.
   function updateCoverage() {
     const isFeet = unitSelect.value === "feet";
     let chosenHeight = parseFloat(heightSelect.value);
@@ -187,12 +189,10 @@
       alert("Please enter a valid ceiling height.");
       return;
     }
-    // Update the sensor box's position: use sensorPos.x and sensorPos.z (from placement)
-    // and the chosen height for y.
+    // Update the sensor box position (using sensorPos for x and z, and chosen height for y).
     const sensorBox = document.getElementById("sensorBox");
     sensorBox.setAttribute("position", `${sensorPos.x} ${chosenHeight} ${sensorPos.z}`);
 
-    // Update the 3D coverage volume.
     // Get coverage dimensions from the table.
     const { width, length } = findCoverageDimensions(chosenHeight, isFeet);
     const coverageVolume = document.getElementById("coverageVolume");
@@ -205,23 +205,22 @@
       bottomRadiusZ: length / 2,
       segments: 32
     });
-    // Position the volume at the sensor's horizontal location (x,z) with its bottom at y=0.
+    // Position the coverage volume at the sensor's (x, z), with its bottom at y=0.
     coverageVolume.setAttribute("position", `${sensorPos.x} 0 ${sensorPos.z}`);
 
     console.log(`Updated: Height = ${chosenHeight} ${isFeet ? "ft" : "m"}, Width = ${width}, Length = ${length}, SensorPos = (${sensorPos.x}, ${sensorPos.z})`);
   }
 
-  // Enables sensor placement mode. When active, tapping the ground will update the sensor's x,z position.
+  // Enable sensor placement mode.
   function enableSensorPlacement() {
     sensorPlacementMode = true;
-    document.getElementById("placementStatus").textContent = "Tap on ground to place sensor.";
+    document.getElementById("placementStatus").textContent = "Tap on the ground to place sensor.";
   }
 
-  // Add a click event listener to the ground plane to register sensor placement.
-  const groundPlane = document.getElementById("groundPlane");
-  groundPlane.addEventListener("click", function (evt) {
+  // Handle sensor placement on the ground plane.
+  function sensorPlacementHandler(evt) {
     if (!sensorPlacementMode) return;
-    // evt.detail.intersection contains the intersection data.
+    // The event detail contains the intersection data.
     const intersection = evt.detail.intersection;
     if (intersection) {
       sensorPos.x = intersection.point.x;
@@ -230,7 +229,12 @@
       sensorPlacementMode = false;
       document.getElementById("placementStatus").textContent = "Sensor placed.";
     }
-  });
+  }
+
+  // Attach event listeners to the ground plane for both click and touchstart events.
+  const groundPlane = document.getElementById("groundPlane");
+  groundPlane.addEventListener("click", sensorPlacementHandler);
+  groundPlane.addEventListener("touchstart", sensorPlacementHandler);
 </script>
 </body>
 </html>
