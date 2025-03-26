@@ -2,44 +2,27 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>WebXR AR Sensor Coverage with Three.js</title>
+  <title>Three.js AR Sensor Coverage</title>
   <style>
     body { margin: 0; overflow: hidden; }
-    #ui {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      z-index: 2;
-      background: rgba(0,0,0,0.6);
-      color: white;
-      padding: 10px;
-      border-radius: 5px;
-      font-family: sans-serif;
+    #info {
+      position: absolute; top: 10px; left: 10px;
+      z-index: 100; color: #fff; font-family: sans-serif;
+      background: rgba(0,0,0,0.5); padding: 10px;
     }
-    #ui input { width: 50px; }
   </style>
 </head>
 <body>
-<div id="ui">
-  <div>
-    <label>Sensor X (m):</label>
-    <input type="number" id="sensorX" value="0" step="0.1">
-  </div>
-  <div>
-    <label>Sensor Z (m):</label>
-    <input type="number" id="sensorZ" value="0" step="0.1">
-  </div>
-  <div>
-    <label>Sensor Height (m):</label>
-    <input type="number" id="sensorHeight" value="3" step="0.1">
-  </div>
-  <button id="updateBtn">Update Coverage</button>
+<div id="info">Sensor mounting height: 3 m<br>
+  (Red cube = sensor; green elliptical cylinder = coverage area)
 </div>
-
-<!-- Three.js and ARButton as ES6 modules -->
 <script type="module">
+  // Import Three.js and ARButton (for AR mode)
   import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
   import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
+
+  // The following code is based on the Three.js "Creating a Scene" documentation:
+  // https://threejs.org/docs/index.html#manual/en/introduction/Creating-a-scene
 
   let camera, scene, renderer;
   let sensorGroup, sensorBox, coverageMesh;
@@ -48,12 +31,12 @@
   animate();
 
   function init() {
-    // Create scene and camera
+    // Create the scene and a perspective camera.
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
     camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
 
-    // Setup renderer with WebXR enabled
+    // Create the WebGL renderer and enable AR.
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -61,82 +44,57 @@
     document.body.appendChild(renderer.domElement);
     document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
 
-    // Add a light
+    // Add a light (as in the docs).
     const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
     light.position.set(0.5, 1, 0.25);
     scene.add(light);
 
-    // Create a group for sensor and coverage area
+    // Create a group to hold the sensor and its coverage area.
     sensorGroup = new THREE.Group();
     scene.add(sensorGroup);
 
-    // Create sensor box: red cube (0.1 m size)
+    // Create a red sensor box (a small cube).
     const boxGeom = new THREE.BoxGeometry(0.1, 0.1, 0.1);
     const boxMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
     sensorBox = new THREE.Mesh(boxGeom, boxMat);
+    // Place the sensor at a mounting height of 3 m.
+    sensorBox.position.set(0, 3, 0);
     sensorGroup.add(sensorBox);
 
-    // Create coverage area: start with a cylinder
-    // We'll later update its height and non-uniform scale to simulate an elliptical footprint.
-    const cylGeom = new THREE.CylinderGeometry(0.05, 0.5, 3, 32);
+    // Create a coverage area using a cylinder.
+    // For this demo, assume:
+    //   Sensor mounting height = 3 m
+    //   Coverage width (X) = 3 * 0.4 = 1.2 m,
+    //   Coverage length (Z) = 3 * 0.5 = 1.5 m.
+    const sensorHeight = 3;
+    const coverageHeight = sensorHeight;
+    const coverageWidth = sensorHeight * 0.4;
+    const coverageLength = sensorHeight * 0.5;
+    // Create a cylinder with a small top radius (representing the sensor's “point”) and a larger bottom radius.
+    // Here we use a cylinder geometry with height = sensorHeight.
+    const cylGeom = new THREE.CylinderGeometry(0.05, 0.5, coverageHeight, 32);
     const cylMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.4 });
     coverageMesh = new THREE.Mesh(cylGeom, cylMat);
-    // Position it so its bottom touches y = 0 (default cylinder is centered)
-    coverageMesh.position.y = 3 / 2;
+    // Position the cylinder so that its bottom touches y = 0.
+    coverageMesh.position.set(0, coverageHeight / 2, 0);
+    // Scale the cylinder non-uniformly in X and Z to simulate an elliptical coverage area.
+    // The default bottom radius is 0.5; we scale it so that:
+    // scale.x = (coverageWidth / 0.5) and scale.z = (coverageLength / 0.5).
+    coverageMesh.scale.set(coverageWidth / 0.5, 1, coverageLength / 0.5);
     sensorGroup.add(coverageMesh);
 
-    // Create a ground plane for visual reference
+    // Add a ground plane for visual reference.
     const planeGeom = new THREE.PlaneGeometry(10, 10);
     const planeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.1, transparent: true });
     const groundPlane = new THREE.Mesh(planeGeom, planeMat);
     groundPlane.rotation.x = -Math.PI / 2;
     scene.add(groundPlane);
 
-    // Listen for window resize events
     window.addEventListener('resize', onWindowResize, false);
-
-    // Set up the UI button event
-    document.getElementById('updateBtn').addEventListener('click', updateSensor);
-  }
-
-  function updateSensor() {
-    // Get manual input values
-    const sensorX = parseFloat(document.getElementById('sensorX').value);
-    const sensorZ = parseFloat(document.getElementById('sensorZ').value);
-    const sensorHeight = parseFloat(document.getElementById('sensorHeight').value);
-
-    // Validate input values
-    if (isNaN(sensorX) || isNaN(sensorZ) || isNaN(sensorHeight)) {
-      alert("Please enter valid numbers.");
-      return;
-    }
-
-    // Update sensor group position (sensorGroup is placed at sensor's X,Z)
-    sensorGroup.position.set(sensorX, 0, sensorZ);
-
-    // Update sensor box position: sensor mounting height is its Y position.
-    sensorBox.position.set(0, sensorHeight, 0);
-
-    // Update coverage mesh:
-    // We'll assume the coverage area extends from the floor (y=0) to the sensor height.
-    // For this demo, let’s assume coverage width scales with sensorHeight * 0.4 and coverage length scales with sensorHeight * 0.5.
-    const coverageHeight = sensorHeight;
-    const coverageWidth = sensorHeight * 0.4;
-    const coverageLength = sensorHeight * 0.5;
-
-    // Re-create the cylinder geometry with new height.
-    const newCylGeom = new THREE.CylinderGeometry(0.05, 0.5, coverageHeight, 32);
-    coverageMesh.geometry.dispose();
-    coverageMesh.geometry = newCylGeom;
-    // Position the cylinder so that its bottom is at y = 0.
-    coverageMesh.position.y = coverageHeight / 2;
-    // Apply non-uniform scaling in X and Z to simulate an elliptical footprint.
-    // The base cylinder has a default bottom radius of 0.5.
-    coverageMesh.scale.set(coverageWidth / 0.5, 1, coverageLength / 0.5);
   }
 
   function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   }
