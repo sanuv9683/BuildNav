@@ -1,0 +1,10 @@
+{
+  "nodes": {
+    "elevator_1F": { "coords": [500, 500], "floor": 1, "connectedTo": ["elevator_2F"] },
+    "elevator_2F": { "coords": [500, 500], "floor": 2, "connectedTo": ["elevator_1F"] },
+    "room101": { "coords": [300, 300], "floor": 1, "connectedTo": ["hallway1"] },
+    "hallway1": { "coords": [400, 400], "floor": 1, "connectedTo": ["room101", "elevator_1F"] },
+    "room201": { "coords": [250, 250], "floor": 2, "connectedTo": ["hallway2"] },
+    "hallway2": { "coords": [400, 400], "floor": 2, "connectedTo": ["room201", "elevator_2F"] }
+  }
+}

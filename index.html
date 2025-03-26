@@ -4,91 +4,136 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Building Navigation</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <style>
-        #map { height: 500px; width: 100%; }
-        .controls { margin: 10px; text-align: center; }
-        .controls input, .controls button { margin: 5px; padding: 8px; }
+        #map { height: 500px; }
+        #miniMapContainer { margin-top: 10px; }
+        #miniMap { width: 150px; height: 150px; border: 1px solid black; }
     </style>
 </head>
 <body>
-
-<div class="controls">
-    <input type="text" id="searchBox" placeholder="Search location...">
-    <button onclick="searchLocation()">Find</button>
-</div>
-
-<div class="controls">
-    <select id="startPoint"></select>
-    <select id="endPoint"></select>
-    <button onclick="findPath()">Navigate</button>
-</div>
-
+<h2>Building Navigation System</h2>
 <div id="map"></div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<label for="startPoint">Start:</label>
+<input type="text" id="startPoint" placeholder="Enter start location">
+<label for="endPoint">End:</label>
+<input type="text" id="endPoint" placeholder="Enter destination">
+<button onclick="previewRoute()">Preview Route</button>
+<p id="previewMessage"></p>
+<button id="startNavigationBtn" onclick="startNavigation()" style="display: none;">Start Navigation</button>
+<div id="miniMapContainer">
+    <h3>Mini-Map</h3>
+    <div id="miniMap"></div>
+    <button onclick="switchFloorFromMiniMap(1)">Floor 1</button>
+    <button onclick="switchFloorFromMiniMap(2)">Floor 2</button>
+    <button onclick="switchFloorFromMiniMap(3)">Floor 3</button>
+</div>
 <script>
-    let map = L.map('map', {
-        crs: L.CRS.Simple,
-        minZoom: -2
-    });
+    let map = L.map('map').setView([0, 0], 3);
+    let userMarker, previewLayer;
+    let currentFloor = 1;
 
-    let floors = {
-        1: "floor_plans/floor1.png",
-        2: "floor_plans/floor2.png",
-        3: "floor_plans/floor3.png"
-    };
+    const elevatorIcon = L.icon({ iconUrl: 'elevator.png', iconSize: [32, 32] });
+    const stairsIcon = L.icon({ iconUrl: 'stairs.png', iconSize: [32, 32] });
 
-    let currentLayer;
-    function changeFloor(floor) {
-        if (currentLayer) {
-            map.removeLayer(currentLayer);
-        }
-        let bounds = [[0, 0], [1000, 1000]];
-        currentLayer = L.imageOverlay(floors[floor], bounds).addTo(map);
-        map.fitBounds(bounds);
+    let miniMap = L.map('miniMap', {
+        zoomControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false
+    }).setView([0, 0], 3);
+    let miniMapOverlay = L.imageOverlay('building-layout.png', [[-50, -50], [50, 50]]).addTo(miniMap);
+    let miniUserMarker = L.circleMarker([0, 0], { color: 'red', radius: 4 }).addTo(miniMap);
+
+    function updateMiniMap(coords) {
+        miniUserMarker.setLatLng(coords);
     }
 
-    changeFloor(1);
-
-    let locations = {};
-    let pathLayer;
-
-    async function loadNavigationData() {
-        let response = await fetch("navigationData.json");
-        let data = await response.json();
-        locations = data.nodes;
-
-        Object.keys(locations).forEach(key => {
-            let marker = L.marker(locations[key]).addTo(map).bindPopup(key);
-            document.getElementById("startPoint").innerHTML += `<option value="${key}">${key}</option>`;
-            document.getElementById("endPoint").innerHTML += `<option value="${key}">${key}</option>`;
-        });
+    function speak(text) {
+        let speech = new SpeechSynthesisUtterance(text);
+        speech.lang = "en-US";
+        speech.rate = 1;
+        window.speechSynthesis.speak(speech);
     }
 
-    function searchLocation() {
-        let query = document.getElementById("searchBox").value.toLowerCase();
-        if (locations[query]) {
-            map.setView(locations[query], 1);
-            L.popup().setLatLng(locations[query]).setContent(query).openOn(map);
-        } else {
-            alert("Location not found!");
-        }
-    }
-
-    function findPath() {
-        if (pathLayer) map.removeLayer(pathLayer);
-
+    function previewRoute() {
+        if (previewLayer) map.removeLayer(previewLayer);
         let start = document.getElementById("startPoint").value;
         let end = document.getElementById("endPoint").value;
         let path = aStar(start, end);
-
         if (path.length > 0) {
-            let latlngs = path.map(node => locations[node]);
-            pathLayer = L.polyline(latlngs, { color: 'blue', weight: 5 }).addTo(map);
+            let latlngs = path.map(node => locations[node].coords);
+            previewLayer = L.polyline(latlngs, { color: 'gray', weight: 4, dashArray: "5,5" }).addTo(map);
+            document.getElementById("previewMessage").innerHTML = "Route previewed. Click 'Start Navigation' to begin.";
+            document.getElementById("startNavigationBtn").style.display = "block";
         } else {
             alert("No path found!");
         }
+    }
+
+    function startNavigation() {
+        if (previewLayer) map.removeLayer(previewLayer);
+        findPath();
+    }
+
+    function moveAlongPath(path) {
+        if (userMarker) map.removeLayer(userMarker);
+        let index = 0;
+        userMarker = L.circleMarker(locations[path[0]].coords, { color: 'red', radius: 8 }).addTo(map);
+        function animate() {
+            if (index < path.length) {
+                let { coords, floor } = locations[path[index]];
+                if (floor !== currentFloor) {
+                    currentFloor = floor;
+                    changeFloor(currentFloor);
+                    speak(`Switch to floor ${floor}`);
+                }
+                if (index > 0) {
+                    let prev = locations[path[index - 1]].coords;
+                    let direction = getDirection(prev, coords);
+                    speak(direction);
+                }
+                userMarker.setLatLng(coords);
+                updateMiniMap(coords);
+                index++;
+                setTimeout(animate, 2000);
+            } else {
+                speak("You have arrived at your destination.");
+            }
+        }
+        animate();
+    }
+
+    function getDirection(prev, next) {
+        let dx = next[0] - prev[0];
+        let dy = next[1] - prev[1];
+        if (Math.abs(dx) > Math.abs(dy)) {
+            return dx > 0 ? "Move right" : "Move left";
+        } else {
+            return dy > 0 ? "Move down" : "Move up";
+        }
+    }
+
+    function addCustomMarkers() {
+        Object.keys(locations).forEach(key => {
+            let { coords, floor } = locations[key];
+            if (floor === currentFloor) {
+                if (key.includes("elevator")) {
+                    L.marker(coords, { icon: elevatorIcon }).addTo(map).bindPopup("Elevator");
+                } else if (key.includes("stairs")) {
+                    L.marker(coords, { icon: stairsIcon }).addTo(map).bindPopup("Stairs");
+                }
+            }
+        });
+    }
+
+    function changeFloor(newFloor) {
+        currentFloor = newFloor;
+        map.eachLayer(layer => { if (layer instanceof L.Marker) map.removeLayer(layer); });
+        addCustomMarkers();
+    }
+
+    function switchFloorFromMiniMap(floor) {
+        changeFloor(floor);
+        speak(`Switched to floor ${floor}`);
     }
 
     function aStar(start, end) {
@@ -103,7 +148,7 @@
 
             openSet = openSet.filter(n => n !== current);
 
-            let neighbors = locations[current] ? Object.keys(locations).filter(n => locations[n]) : [];
+            let neighbors = locations[current]?.connectedTo || [];
             for (let neighbor of neighbors) {
                 let tentativeGScore = gScore[current] + heuristic(current, neighbor);
                 if (tentativeGScore < (gScore[neighbor] || Infinity)) {
@@ -118,20 +163,8 @@
     }
 
     function heuristic(a, b) {
-        return Math.hypot(locations[a][0] - locations[b][0], locations[a][1] - locations[b][1]);
+        return Math.hypot(locations[a].coords[0] - locations[b].coords[0], locations[a].coords[1] - locations[b].coords[1]);
     }
-
-    function reconstructPath(cameFrom, current) {
-        let totalPath = [current];
-        while (cameFrom[current]) {
-            current = cameFrom[current];
-            totalPath.unshift(current);
-        }
-        return totalPath;
-    }
-
-    loadNavigationData();
 </script>
-
 </body>
 </html>
