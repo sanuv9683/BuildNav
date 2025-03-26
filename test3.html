@@ -30,6 +30,11 @@
       background: rgba(0, 0, 0, 0.5);
       padding: 10px;
       border-radius: 4px;
+      z-index: 100;
+    }
+
+    label {
+      font-weight: bold;
     }
 
   </style>
@@ -38,6 +43,14 @@
 <!-- UI Panel for sensor selection and instructions -->
 <div id="ui-panel">
   <h1>Sensor Coverage App</h1>
+
+  <!-- Camera Selection -->
+  <label for="cameraSelect">Select Camera:</label>
+  <select id="cameraSelect"></select>
+
+  <br/><br/>
+
+  <!-- Sensor Selection -->
   <label for="ceilingHeight">Select Ceiling Height:</label>
   <select id="ceilingHeight">
     <option value="7.5">7.5 ft</option>
@@ -46,13 +59,14 @@
     <option value="10.0">10.0 ft</option>
     <!-- ... fill in from your coverage table ... -->
   </select>
+
   <p>Tap on the view to place the sensor.</p>
 </div>
 
 <!-- Canvas for the Three.js scene -->
 <canvas id="three-canvas"></canvas>
 
-<!-- Optional hidden video element for camera feed -->
+<!-- Hidden video element for camera feed -->
 <video id="video" autoplay playsinline style="display: none;"></video>
 
 <!-- Three.js (via CDN or local) -->
@@ -60,8 +74,7 @@
 <!-- Our script -->
 <script>
   // Example sensor coverage data, from your table
-  // Keyed by ceiling height (ft). The 'width' and 'length' could represent
-  // the horizontal coverage extents at floor level, for instance.
+  // Keyed by ceiling height (ft). The 'width' and 'length' represent coverage extents.
   const sensorCoverageData = {
     "7.5": { width: 7.7, length: 9.5 },
     "8.0": { width: 9.2, length: 11.4 },
@@ -69,21 +82,23 @@
     "10.0": { width: 11.0, length: 13.4 },
     "11.0": { width: 12.3, length: 15.2 },
     "12.0": { width: 13.8, length: 16.5 },
-    // ... etc. Fill in or convert to meters if needed
+    // ... fill in or convert to meters if needed
   };
 
   let scene, camera, renderer;
   let video, videoTexture;
   let sensorMesh = null;
   let coverageMesh = null;
+  let currentStream = null;
 
   init();
   animate();
 
-  function init() {
+  async function init() {
     // Grab DOM elements
     const canvas = document.getElementById("three-canvas");
     const ceilingHeightSelect = document.getElementById("ceilingHeight");
+    const cameraSelect = document.getElementById("cameraSelect");
     video = document.getElementById("video");
 
     // Initialize Three.js
@@ -109,8 +124,20 @@
     dirLight.position.set(0, 10, 10);
     scene.add(dirLight);
 
-    // Start camera feed
-    startCameraFeed();
+    // Populate camera selection dropdown
+    await populateCameraList(cameraSelect);
+
+    // Start camera feed with the default/first camera
+    startCameraFeed(cameraSelect.value);
+
+    // If user changes camera, restart the feed
+    cameraSelect.addEventListener("change", () => {
+      // Stop any existing stream
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+      }
+      startCameraFeed(cameraSelect.value);
+    });
 
     // Handle user click/tap to place sensor
     canvas.addEventListener("pointerdown", (event) => {
@@ -121,11 +148,46 @@
     window.addEventListener("resize", onWindowResize, false);
   }
 
-  function startCameraFeed() {
-    // Request camera access
+  /**
+   * Enumerates available cameras and populates a <select> with them.
+   */
+  async function populateCameraList(cameraSelect) {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter((d) => d.kind === "videoinput");
+
+      // Clear existing options
+      cameraSelect.innerHTML = "";
+
+      // Populate with available cameras
+      videoDevices.forEach((device, index) => {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        // device.label is only available if the user has already granted permission
+        option.text = device.label || `Camera ${index + 1}`;
+        cameraSelect.appendChild(option);
+      });
+    } catch (err) {
+      console.error("Error enumerating devices:", err);
+    }
+  }
+
+  /**
+   * Starts the camera feed for a specific deviceId
+   */
+  function startCameraFeed(deviceId) {
+    const constraints = {
+      video: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        // You can add other constraints like facingMode here if desired
+      },
+      audio: false,
+    };
+
     navigator.mediaDevices
-            .getUserMedia({ video: true, audio: false })
+            .getUserMedia(constraints)
             .then((stream) => {
+              currentStream = stream;
               video.srcObject = stream;
               video.play();
 
@@ -161,8 +223,7 @@
 
     // In this simple example, let's assume there's a ground plane at z=0
     // So we manually find where the ray intersects z=0
-    // param t for ray intersection:  origin + t * direction
-    // If we want to place the sensor in front of the camera, we might do:
+    // param t for ray intersection: origin + t * direction
     const t = -camera.position.z / raycaster.ray.direction.z;
     const sensorPos = new THREE.Vector3().copy(raycaster.ray.origin).add(
             raycaster.ray.direction.clone().multiplyScalar(t)
@@ -199,20 +260,12 @@
     if (!data) return;
 
     // Suppose coverage is a cone from the sensor downward.
-    // We can interpret 'width' and 'length' as diameters at the floor plane,
-    // or treat them as half-angles. For simplicity, let's assume a single radius.
-    // Let's use the bigger dimension to approximate radius:
+    // We'll take the largest dimension as the cone base radius
     const radius = Math.max(data.width, data.length) / 2;
 
-    // The height of the cone from the sensor to the floor plane
-    // If the sensor is at (x, y, z), let's assume floor is at z=0, so height = sensorPos.z
-    // But we must check the actual coordinate system.
-    // In this simple example, if camera is at z=5 and we placed sensor at around z=0,
-    // we might assume coverage extends in negative z, so let's do something approximate.
-
-    const coverageHeight = 2; // Hard-coded for demonstration
-    // If you want it dynamic: coverageHeight = sensorPos.z (if sensor is at z>0)
-    // or use the real distance from the sensor to the floor.
+    // Hard-coded coverage height for demonstration
+    // In a real scenario, calculate from sensorPos to floor or use actual geometry
+    const coverageHeight = 2;
 
     // Create cone geometry
     const coneGeometry = new THREE.ConeGeometry(radius, coverageHeight, 32, 1, true);
