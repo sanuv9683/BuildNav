@@ -2,312 +2,101 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Sensor Coverage App - Camera Selection</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sensor Coverage Visualization</title>
+<!--  <link rel="stylesheet" href="styles.css" />-->
   <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden; /* remove scrollbars */
+    /* styles.css */
+
+    /* Container for both video and canvas overlays */
+    #app {
+      position: relative;
       width: 100%;
-      height: 100%;
-      background: #000;
-      font-family: sans-serif;
+      height: 100vh;
+      overflow: hidden;
     }
 
-    #three-canvas {
+    /* Style for the camera feed video */
+    #cameraFeed {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
+      object-fit: cover;  /* Maintain aspect ratio and cover the container */
     }
 
-    #ui-panel {
+    /* Style for the Three.js canvas overlay */
+    #threeCanvas {
       position: absolute;
-      top: 10px;
-      left: 10px;
-      color: #fff;
-      background: rgba(0, 0, 0, 0.5);
-      padding: 10px;
-      border-radius: 4px;
-      z-index: 100;
-    }
-
-    label {
-      font-weight: bold;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none; /* Pass clicks through to underlying elements */
     }
 
   </style>
 </head>
 <body>
-<!-- UI Panel for camera & sensor selection -->
-<div id="ui-panel">
-  <h1>Sensor Coverage App</h1>
-
-  <!-- Camera Selection -->
-  <label for="cameraSelect">Select Camera:</label>
-  <select id="cameraSelect"></select>
-
-  <br /><br />
-
-  <!-- Sensor Selection -->
-  <label for="ceilingHeight">Select Ceiling Height:</label>
-  <select id="ceilingHeight">
-    <option value="7.5">7.5 ft</option>
-    <option value="8.0">8.0 ft</option>
-    <option value="9.0">9.0 ft</option>
-    <option value="10.0">10.0 ft</option>
-    <!-- ... add more from your table ... -->
-  </select>
-
-  <p>Tap on the view to place the sensor.</p>
+<!-- Main app container -->
+<div id="app">
+  <!-- Video element for live camera feed -->
+  <video id="cameraFeed" autoplay playsinline></video>
+  <!-- Canvas element for Three.js 3D visualization -->
+  <canvas id="threeCanvas"></canvas>
 </div>
 
-<!-- Canvas for Three.js scene -->
-<canvas id="three-canvas"></canvas>
+<!-- Import main JavaScript file as an ES6 module -->
+<script type="module">
+  // app.js
 
-<!-- Hidden video element for camera feed -->
-<video id="video" autoplay playsinline style="display: none;"></video>
+  // Import functions from the Three.js module
+  import { initThreeScene, updateSensorCoverage } from './threeD.js';
 
-<!-- Three.js (CDN or local file) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
-<!-- Main script -->
-<script>
-  // Example sensor coverage data (ft)
-  const sensorCoverageData = {
-    "7.5": { width: 7.7, length: 9.5 },
-    "8.0": { width: 9.2, length: 11.4 },
-    "9.0": { width: 10.0, length: 12.3 },
-    "10.0": { width: 11.0, length: 13.4 },
-    // ... add more entries as needed
-  };
+  // Wait for the DOM to fully load before starting
+  document.addEventListener('DOMContentLoaded', async () => {
+    // Get references to the video and canvas elements
+    const video = document.getElementById('cameraFeed');
+    const canvas = document.getElementById('threeCanvas');
 
-  let scene, camera, renderer;
-  let video, videoTexture;
-  let currentStream = null;
+    // Initialize the Three.js scene on the canvas
+    const threeScene = initThreeScene(canvas);
 
-  let sensorMesh = null;    // Represents the sensor's position
-  let coverageMesh = null;  // Represents the sensor's coverage shape
-
-  init();
-  animate();
-
-  async function init() {
-    // Get references to DOM elements
-    const canvas = document.getElementById("three-canvas");
-    const cameraSelect = document.getElementById("cameraSelect");
-    const ceilingHeightSelect = document.getElementById("ceilingHeight");
-    video = document.getElementById("video");
-
-    // Initialize Three.js renderer & scene
-    renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    scene = new THREE.Scene();
-
-    // Set up a perspective camera for 3D
-    camera = new THREE.PerspectiveCamera(
-            75, // Field of View
-            window.innerWidth / window.innerHeight,
-            0.1, // Near clipping
-            1000 // Far clipping
-    );
-    camera.position.z = 5;
-
-    // Basic lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-    scene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(0, 10, 10);
-    scene.add(dirLight);
-
-    // 1) Populate the camera list in the dropdown
-    await populateCameraList(cameraSelect);
-
-    // 2) Start camera feed with the first available camera (or the default)
-    startCameraFeed(cameraSelect.value);
-
-    // 3) If user changes camera from dropdown, restart feed
-    cameraSelect.addEventListener("change", () => {
-      stopCurrentStream();
-      startCameraFeed(cameraSelect.value);
-    });
-
-    // 4) Handle user taps to place sensor
-    canvas.addEventListener("pointerdown", (event) => {
-      placeSensor(event, ceilingHeightSelect.value);
-    });
-
-    // 5) Adjust viewport on window resize
-    window.addEventListener("resize", onWindowResize, false);
-  }
-
-  /**
-   * Enumerates video input devices and populates <select> with them
-   */
-  async function populateCameraList(cameraSelect) {
+    // Attempt to access the user's camera
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter((d) => d.kind === "videoinput");
-
-      // Clear existing options (if any)
-      cameraSelect.innerHTML = "";
-
-      // Populate <option> for each camera
-      videoDevices.forEach((device, index) => {
-        const option = document.createElement("option");
-        option.value = device.deviceId;
-        option.text = device.label || `Camera ${index + 1}`;
-        cameraSelect.appendChild(option);
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream; // Set the live camera stream as the video source
     } catch (err) {
-      console.error("Error enumerating devices:", err);
-    }
-  }
-
-  /**
-   * Start the camera feed for a specific deviceId
-   */
-  function startCameraFeed(deviceId) {
-    const constraints = {
-      video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-      },
-      audio: false,
-    };
-
-    navigator.mediaDevices
-            .getUserMedia(constraints)
-            .then((stream) => {
-              currentStream = stream;
-              video.srcObject = stream;
-              video.play();
-
-              // Create a VideoTexture for the Three.js background
-              videoTexture = new THREE.VideoTexture(video);
-
-              // Option 1: Set scene background to the video
-              scene.background = videoTexture;
-
-              // Option 2 (alternative): Map video onto a large plane behind everything
-              // const geometry = new THREE.PlaneGeometry(16, 9);
-              // const material = new THREE.MeshBasicMaterial({ map: videoTexture });
-              // const backgroundMesh = new THREE.Mesh(geometry, material);
-              // backgroundMesh.position.z = -5;
-              // scene.add(backgroundMesh);
-
-            })
-            .catch((error) => {
-              console.error("Error accessing camera:", error);
-            });
-  }
-
-  /**
-   * Stops the current media stream if it exists
-   */
-  function stopCurrentStream() {
-    if (currentStream) {
-      currentStream.getTracks().forEach(track => track.stop());
-      currentStream = null;
-    }
-  }
-
-  /**
-   * Handle placing a sensor on user click
-   */
-  function placeSensor(event, ceilingHeight) {
-    // Convert click to normalized device coords
-    const rect = renderer.domElement.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-    // Raycast from camera into the scene
-    const mouseVec = new THREE.Vector2(x, y);
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouseVec, camera);
-
-    // For this example, assume a "floor" plane at z=0
-    // Solve for t in the ray intersection with z=0
-    const t = -camera.position.z / raycaster.ray.direction.z;
-    const sensorPos = new THREE.Vector3().copy(raycaster.ray.origin).add(
-            raycaster.ray.direction.clone().multiplyScalar(t)
-    );
-
-    // If there's already a sensor mesh, remove it
-    if (sensorMesh) {
-      scene.remove(sensorMesh);
-      sensorMesh.geometry.dispose();
-      sensorMesh.material.dispose();
+      console.error('Error accessing the camera:', err);
+      alert('Camera access is required for this application.');
+      return;
     }
 
-    // Create a small sphere for the sensor
-    const sensorGeo = new THREE.SphereGeometry(0.1, 16, 16);
-    const sensorMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-    sensorMesh = new THREE.Mesh(sensorGeo, sensorMat);
-    sensorMesh.position.copy(sensorPos);
-    scene.add(sensorMesh);
+    // Listen for click events on the video element to set the sensor mounting location
+    video.addEventListener('click', (event) => {
+      // Calculate the click position relative to the video element
+      const rect = video.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
 
-    // Draw coverage area (cone, frustum, etc.) based on the chosen ceiling height
-    drawCoverage(sensorPos, ceilingHeight);
-  }
+      console.log('Sensor location (in video coordinates):', { x, y });
 
-  /**
-   * Draw a cone (or other shape) to represent the sensor coverage
-   */
-  function drawCoverage(sensorPos, ceilingHeight) {
-    // Remove old coverage mesh if any
-    if (coverageMesh) {
-      scene.remove(coverageMesh);
-      coverageMesh.geometry.dispose();
-      coverageMesh.material.dispose();
-    }
+      // Example sensor metrics (range in meters, coverage angle in degrees)
+      // In a real implementation, these metrics would be provided or updated dynamically.
+      const sensorMetrics = {
+        range: 10,    // e.g., sensor detection range
+        angle: 45     // e.g., sensor coverage angle
+      };
 
-    // Get coverage data from our table
-    const data = sensorCoverageData[ceilingHeight];
-    if (!data) return;
-
-    // We'll take the largest dimension as the base radius of the cone
-    const radius = Math.max(data.width, data.length) / 2;
-
-    // Hard-coded coverage height for demonstration
-    // In a real scenario, compute from sensorPos to floor or use actual geometry
-    const coverageHeight = 2;
-
-    // Create a cone geometry
-    const coneGeometry = new THREE.ConeGeometry(radius, coverageHeight, 32, 1, true);
-    // Flip upside down if needed
-    coneGeometry.rotateX(Math.PI);
-
-    const coneMaterial = new THREE.MeshStandardMaterial({
-      color: 0x00ff00,
-      transparent: true,
-      opacity: 0.3,
-      wireframe: false,
+      // Update the 3D visualization with the new sensor data and mounting point.
+      updateSensorCoverage(threeScene, sensorMetrics, { x, y });
     });
+  });
 
-    coverageMesh = new THREE.Mesh(coneGeometry, coneMaterial);
+</script>
 
-    // Position the cone so the tip is at the sensor
-    coverageMesh.position.set(sensorPos.x, sensorPos.y, sensorPos.z - coverageHeight / 2);
-
-    scene.add(coverageMesh);
-  }
-
-  /**
-   * Handle window resizing
-   */
-  function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  }
-
-  /**
-   * Animation loop
-   */
-  function animate() {
-    requestAnimationFrame(animate);
-    renderer.render(scene, camera);
-  }
+<script type="module">
 
 </script>
 </body>
