@@ -1,194 +1,152 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>3D Sensor Coverage AR – Manual Input with Cylinder</title>
-  <!-- A-Frame Library -->
-  <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
-  <!-- AR.js for A-Frame -->
-  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  <meta charset="utf-8">
+  <title>WebXR AR Sensor Coverage with Three.js</title>
   <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-      font-family: sans-serif;
-    }
-    #ui-panel {
+    body { margin: 0; overflow: hidden; }
+    #ui {
       position: absolute;
       top: 10px;
       left: 10px;
+      z-index: 2;
+      background: rgba(0,0,0,0.6);
+      color: white;
       padding: 10px;
-      background-color: rgba(0, 0, 0, 0.6);
-      color: #fff;
-      border-radius: 4px;
-      z-index: 9999;
+      border-radius: 5px;
+      font-family: sans-serif;
     }
-    #ui-panel div {
-      margin-bottom: 6px;
-    }
-    #ui-panel label,
-    #ui-panel input,
-    #ui-panel select,
-    #ui-panel button {
-      margin: 4px;
-    }
+    #ui input { width: 50px; }
   </style>
 </head>
 <body>
-<!-- UI Panel: Enter units, ceiling height, sensor X and Z coordinates -->
-<div id="ui-panel">
+<div id="ui">
   <div>
-    <label for="unitSelect">Units:</label>
-    <select id="unitSelect" onchange="populateHeightDropdown()">
-      <option value="feet">Feet</option>
-      <option value="meters">Meters</option>
-    </select>
+    <label>Sensor X (m):</label>
+    <input type="number" id="sensorX" value="0" step="0.1">
   </div>
   <div>
-    <label for="heightSelect">Ceiling Height:</label>
-    <select id="heightSelect"></select>
-    <label for="heightInput">Or custom:</label>
-    <input type="number" step="0.1" id="heightInput" placeholder="e.g., 9.0" style="width:80px;">
+    <label>Sensor Z (m):</label>
+    <input type="number" id="sensorZ" value="0" step="0.1">
   </div>
   <div>
-    <label for="sensorX">Sensor X:</label>
-    <input type="number" step="0.1" id="sensorX" placeholder="e.g., 0">
-    <label for="sensorZ">Sensor Z:</label>
-    <input type="number" step="0.1" id="sensorZ" placeholder="e.g., 0">
+    <label>Sensor Height (m):</label>
+    <input type="number" id="sensorHeight" value="3" step="0.1">
   </div>
-  <button onclick="updateCoverage()">Update Coverage</button>
-  <div id="placementStatus"></div>
+  <button id="updateBtn">Update Coverage</button>
 </div>
 
-<!-- AR Scene anchored on the Hiro marker -->
-<a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;" vr-mode-ui="enabled: false">
-  <a-marker preset="hiro">
-    <!-- Optional ground plane for reference -->
-    <a-plane position="0 0 0" rotation="-90 0 0" width="10" height="10"
-             material="color: #fff; opacity: 0.1; transparent: true"></a-plane>
-    <!-- Coverage volume: a cylinder that will be scaled to become elliptical -->
-    <a-cylinder
-            id="coverageVolume"
-            radius-top="0.05"
-            radius-bottom="1"
-            height="2.5"
-            position="0 1.25 0"
-            material="color: #00ff00; opacity: 0.4; side: double"
-    ></a-cylinder>
-    <!-- Sensor representation: red box with a "Sensor" label -->
-    <a-box
-            id="sensorBox"
-            position="0 2.5 0"
-            width="0.1"
-            height="0.1"
-            depth="0.1"
-            material="color: #ff0000"
-    >
-      <a-text value="Sensor" align="center" color="#ff0000" position="0 0.2 0"></a-text>
-    </a-box>
-  </a-marker>
-  <!-- Camera -->
-  <a-entity camera look-controls></a-entity>
-</a-scene>
+<!-- Three.js and ARButton as ES6 modules -->
+<script type="module">
+  import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
+  import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
 
-<script>
-  /***************************************************
-   * Coverage Data & Helper Functions
-   ***************************************************/
-          // Example coverage data (in feet) from your sensor specs.
-  const coverageDataFeet = [
-            { height: 7.5, width: 7.7, length: 9.5 },
-            { height: 8.2, width: 9.2, length: 11.4 },
-            { height: 9.0, width: 10.0, length: 12.3 },
-            { height: 9.5, width: 10.7, length: 13.4 },
-            { height: 10.0, width: 11.3, length: 14.5 },
-            { height: 11.0, width: 13.8, length: 15.2 }
-          ];
-  // Convert to meters (1 ft = 0.3048 m)
-  const coverageDataMeters = coverageDataFeet.map(e => ({
-    height: +(e.height * 0.3048).toFixed(2),
-    width: +(e.width * 0.3048).toFixed(2),
-    length: +(e.length * 0.3048).toFixed(2)
-  }));
+  let camera, scene, renderer;
+  let sensorGroup, sensorBox, coverageMesh;
 
-  const unitSelect = document.getElementById("unitSelect");
-  const heightSelect = document.getElementById("heightSelect");
-  const heightInput = document.getElementById("heightInput");
+  init();
+  animate();
 
-  // Populate the ceiling height dropdown with suggested values.
-  function populateHeightDropdown() {
-    heightSelect.innerHTML = "";
-    const data = unitSelect.value === "feet" ? coverageDataFeet : coverageDataMeters;
-    data.forEach(e => {
-      const opt = document.createElement("option");
-      opt.value = e.height;
-      opt.textContent = e.height + (unitSelect.value === "feet" ? " ft" : " m");
-      heightSelect.appendChild(opt);
-    });
-  }
-  populateHeightDropdown();
+  function init() {
+    // Create scene and camera
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
 
-  // Find coverage dimensions based on the given ceiling height.
-  function findCoverageDimensions(inputHeight, isFeet) {
-    const data = isFeet ? coverageDataFeet : coverageDataMeters;
-    let exact = data.find(d => d.height === inputHeight);
-    if (exact) return { width: exact.width, length: exact.length };
-    let closest = data.reduce((prev, curr) =>
-            Math.abs(curr.height - inputHeight) < Math.abs(prev.height - inputHeight)
-                    ? curr
-                    : prev
-    );
-    return { width: closest.width, length: closest.length };
+    // Setup renderer with WebXR enabled
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+    document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
+
+    // Add a light
+    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+    light.position.set(0.5, 1, 0.25);
+    scene.add(light);
+
+    // Create a group for sensor and coverage area
+    sensorGroup = new THREE.Group();
+    scene.add(sensorGroup);
+
+    // Create sensor box: red cube (0.1 m size)
+    const boxGeom = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+    const boxMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    sensorBox = new THREE.Mesh(boxGeom, boxMat);
+    sensorGroup.add(sensorBox);
+
+    // Create coverage area: start with a cylinder
+    // We'll later update its height and non-uniform scale to simulate an elliptical footprint.
+    const cylGeom = new THREE.CylinderGeometry(0.05, 0.5, 3, 32);
+    const cylMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.4 });
+    coverageMesh = new THREE.Mesh(cylGeom, cylMat);
+    // Position it so its bottom touches y = 0 (default cylinder is centered)
+    coverageMesh.position.y = 3 / 2;
+    sensorGroup.add(coverageMesh);
+
+    // Create a ground plane for visual reference
+    const planeGeom = new THREE.PlaneGeometry(10, 10);
+    const planeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.1, transparent: true });
+    const groundPlane = new THREE.Mesh(planeGeom, planeMat);
+    groundPlane.rotation.x = -Math.PI / 2;
+    scene.add(groundPlane);
+
+    // Listen for window resize events
+    window.addEventListener('resize', onWindowResize, false);
+
+    // Set up the UI button event
+    document.getElementById('updateBtn').addEventListener('click', updateSensor);
   }
 
-  /***************************************************
-   * Update Sensor & Coverage Area Display
-   ***************************************************/
-  function updateCoverage() {
-    // Get sensor coordinates from manual input fields.
-    const sensorX = parseFloat(document.getElementById("sensorX").value);
-    const sensorZ = parseFloat(document.getElementById("sensorZ").value);
-    if (isNaN(sensorX) || isNaN(sensorZ)) {
-      alert("Please enter valid sensor X and Z coordinates.");
+  function updateSensor() {
+    // Get manual input values
+    const sensorX = parseFloat(document.getElementById('sensorX').value);
+    const sensorZ = parseFloat(document.getElementById('sensorZ').value);
+    const sensorHeight = parseFloat(document.getElementById('sensorHeight').value);
+
+    // Validate input values
+    if (isNaN(sensorX) || isNaN(sensorZ) || isNaN(sensorHeight)) {
+      alert("Please enter valid numbers.");
       return;
     }
-    // Get ceiling height from dropdown or custom input.
-    const isFeet = unitSelect.value === "feet";
-    let chosenHeight = parseFloat(heightSelect.value);
-    if (heightInput.value.trim() !== "") {
-      chosenHeight = parseFloat(heightInput.value);
-    }
-    if (isNaN(chosenHeight)) {
-      alert("Please enter a valid ceiling height.");
-      return;
-    }
-    // Update the sensor box position.
-    const sensorBox = document.getElementById("sensorBox");
-    sensorBox.setAttribute("position", `${sensorX} ${chosenHeight} ${sensorZ}`);
 
-    // Update the coverage volume.
-    // We'll use an <a-cylinder> where:
-    // - The height is the chosen ceiling height.
-    // - Its position.y is set to chosenHeight/2 so its bottom touches the floor (y=0).
-    // - We'll use a fixed radius-bottom of 1, then scale the cylinder in X and Z to achieve the desired elliptical shape.
-    const coverageVolume = document.getElementById("coverageVolume");
-    coverageVolume.setAttribute("height", chosenHeight);
-    // Position the cylinder so that its base is at y=0.
-    coverageVolume.setAttribute("position", `${sensorX} ${chosenHeight / 2} ${sensorZ}`);
-    // Set the cylinder’s top radius (at the sensor) to 0.05.
-    coverageVolume.setAttribute("radius-top", 0.05);
-    // Use a default radius-bottom of 1.
-    coverageVolume.setAttribute("radius-bottom", 1);
-    // Look up the coverage dimensions.
-    const { width, length } = findCoverageDimensions(chosenHeight, isFeet);
-    // Scale the cylinder so that:
-    //   scale.x = (width/2) and scale.z = (length/2)
-    coverageVolume.setAttribute("scale", `${width / 2} 1 ${length / 2}`);
+    // Update sensor group position (sensorGroup is placed at sensor's X,Z)
+    sensorGroup.position.set(sensorX, 0, sensorZ);
 
-    // Update the status message.
-    document.getElementById("placementStatus").textContent =
-            `Sensor placed at (${sensorX.toFixed(2)}, ${sensorZ.toFixed(2)}) with height ${chosenHeight}`;
-    console.log(`Sensor at (${sensorX}, ${sensorZ}) with height ${chosenHeight}`);
+    // Update sensor box position: sensor mounting height is its Y position.
+    sensorBox.position.set(0, sensorHeight, 0);
+
+    // Update coverage mesh:
+    // We'll assume the coverage area extends from the floor (y=0) to the sensor height.
+    // For this demo, let’s assume coverage width scales with sensorHeight * 0.4 and coverage length scales with sensorHeight * 0.5.
+    const coverageHeight = sensorHeight;
+    const coverageWidth = sensorHeight * 0.4;
+    const coverageLength = sensorHeight * 0.5;
+
+    // Re-create the cylinder geometry with new height.
+    const newCylGeom = new THREE.CylinderGeometry(0.05, 0.5, coverageHeight, 32);
+    coverageMesh.geometry.dispose();
+    coverageMesh.geometry = newCylGeom;
+    // Position the cylinder so that its bottom is at y = 0.
+    coverageMesh.position.y = coverageHeight / 2;
+    // Apply non-uniform scaling in X and Z to simulate an elliptical footprint.
+    // The base cylinder has a default bottom radius of 0.5.
+    coverageMesh.scale.set(coverageWidth / 0.5, 1, coverageLength / 0.5);
+  }
+
+  function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  function animate() {
+    renderer.setAnimationLoop(render);
+  }
+
+  function render() {
+    renderer.render(scene, camera);
   }
 </script>
 </body>
